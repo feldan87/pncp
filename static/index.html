@@ -115,10 +115,15 @@
     const $ = id => document.getElementById(id);
 
     const fmtData = d => {
-      if (!d) return "—";
-      const dt = new Date(d);
-      return isNaN(dt) ? d : dt.toLocaleDateString("pt-br") + " " + dt.toLocaleTimeString("pt-br",{hour:"2-digit",minute:"2-digit"});
-    };
+  if (!d) return "—";
+  const dt = new Date(d);
+  if (isNaN(dt.getTime())) return d;
+
+  const dia = String(dt.getDate()).padStart(2, "0");
+  const mes = String(dt.getMonth() + 1).padStart(2, "0");
+  const ano = dt.getFullYear();
+  return `${dia}/${mes}/${ano}`;
+};
     const fmtMoeda = v => (v===null||v===undefined||v==="") ? "—"
       : Number(v).toLocaleString("pt-br",{style:"currency",currency:"BRL"});
     const fmtNum = v => (v===null||v===undefined||v==="") ? "—"
