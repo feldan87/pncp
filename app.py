@@ -121,7 +121,9 @@ def fetch_itens(edital):
 
 
 def build_rows(params):
-    """Busca os editais e expande em linhas por item (em paralelo)."""
+    """Busca os editais e expande em linhas por item (em paralelo).
+    Depois filtra apenas os itens que contêm a palavra-chave digitada.
+    """
     data = fetch_search(params)
     editais = data.get("items", [])
     total = data.get("total") or len(editais)
@@ -130,6 +132,21 @@ def build_rows(params):
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
         for result in pool.map(fetch_itens, editais):
             rows.extend(result)
+
+    # --- NOVO: filtrar apenas itens que contenham a palavra-chave ---
+    q = (params.get("q") or "").strip().lower()
+    if q:
+        rows_filtradas = []
+        for r in rows:
+            descricao = (r.get("descricao") or "").lower()
+            edital_titulo = (r.get("edital") or "").lower()
+            # mantém a linha se a palavra-chave aparecer na descrição do item
+            # ou no título do edital
+            if q in descricao or q in edital_titulo:
+                rows_filtradas.append(r)
+        rows = rows_filtradas
+    # ---------------------------------------------------------------
+
     return rows, total
 
 
