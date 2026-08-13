@@ -16,6 +16,22 @@ import io
 import requests
 from flask import Flask, Response, jsonify, request, send_from_directory
 
+from datetime import datetime
+
+def formatar_data(valor):
+    """Converte data da API para DD/MM/AAAA."""
+    if not valor:
+        return ""
+    try:
+        # Aceita formatos com ou sem horário
+        if "T" in str(valor):
+            dt = datetime.fromisoformat(str(valor).replace("Z", ""))
+        else:
+            dt = datetime.strptime(str(valor)[:10], "%Y-%m-%d")
+        return dt.strftime("%d/%m/%Y")
+    except Exception:
+        return str(valor)
+
 app = Flask(__name__, static_folder="static", static_url_path="")
 
 SEARCH_URL = "https://pncp.gov.br/api/search/"
@@ -209,7 +225,13 @@ def exportar():
     writer = csv.writer(buf, delimiter=";")
     writer.writerow([label for _, label in cols])
     for r in rows:
-        writer.writerow([r.get(key, "") for key, _ in cols])
+    linha = []
+    for key, _ in cols:
+        valor = r.get(key, "")
+        if key == "data_fim":
+            valor = formatar_data(valor)
+        linha.append(valor)
+    writer.writerow(linha)
 
     # BOM para o Excel abrir acentos corretamente.
     csv_bytes = ("﻿" + buf.getvalue()).encode("utf-8")
