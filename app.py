@@ -12,6 +12,7 @@ Produção:      gunicorn app:app
 import concurrent.futures
 import csv
 import io
+from datetime import datetime
 
 import requests
 from flask import Flask, Response, jsonify, request, send_from_directory
@@ -36,6 +37,20 @@ TAM_PAGINA = 25
 # Quantas requisições de itens disparamos em paralelo.
 MAX_WORKERS = 8
 TIMEOUT = 30
+
+
+def formatar_data(valor):
+    """Converte data da API para DD/MM/AAAA."""
+    if not valor:
+        return ""
+    try:
+        if "T" in str(valor):
+            dt = datetime.fromisoformat(str(valor).replace("Z", ""))
+        else:
+            dt = datetime.strptime(str(valor)[:10], "%Y-%m-%d")
+        return dt.strftime("%d/%m/%Y")
+    except Exception:
+        return str(valor)
 
 
 def fetch_search(params):
@@ -187,20 +202,29 @@ def exportar():
     rows, _ = build_rows(params)
 
     cols = [
-        ("local", "Local"),
         ("orgao", "Órgão"),
-        ("data_fim", "Data fim recebimento"),
+        ("cidade", "Cidade"),
+        ("estado", "Estado"),
+        ("data_fim", "Data fim"),
         ("item", "Item"),
         ("descricao", "Descrição"),
         ("quantidade", "Quantidade"),
         ("valor_unitario", "Valor unitário estimado"),
         ("valor_total", "Valor total estimado"),
     ]
+
     buf = io.StringIO()
     writer = csv.writer(buf, delimiter=";")
     writer.writerow([label for _, label in cols])
+
     for r in rows:
-        writer.writerow([r.get(key, "") for key, _ in cols])
+        linha = []
+        for key, _ in cols:
+            valor = r.get(key, "")
+            if key == "data_fim":
+                valor = formatar_data(valor)
+            linha.append(valor)
+        writer.writerow(linha)
 
     # BOM para o Excel abrir acentos corretamente.
     csv_bytes = ("﻿" + buf.getvalue()).encode("utf-8")
