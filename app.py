@@ -16,22 +16,6 @@ import io
 import requests
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from datetime import datetime
-
-def formatar_data(valor):
-    """Converte data da API para DD/MM/AAAA."""
-    if not valor:
-        return ""
-    try:
-        # Aceita formatos com ou sem horário
-        if "T" in str(valor):
-            dt = datetime.fromisoformat(str(valor).replace("Z", ""))
-        else:
-            dt = datetime.strptime(str(valor)[:10], "%Y-%m-%d")
-        return dt.strftime("%d/%m/%Y")
-    except Exception:
-        return str(valor)
-
 app = Flask(__name__, static_folder="static", static_url_path="")
 
 SEARCH_URL = "https://pncp.gov.br/api/search/"
@@ -48,7 +32,7 @@ HEADERS = {
 }
 
 # Quantos editais por página buscamos da API de search.
-TAM_PAGINA = 10
+TAM_PAGINA = 25
 # Quantas requisições de itens disparamos em paralelo.
 MAX_WORKERS = 8
 TIMEOUT = 30
@@ -87,27 +71,24 @@ def parse_item_url(item_url):
 def fetch_itens(edital):
     """Busca os itens de um edital e devolve uma linha por item."""
     ref = parse_item_url(edital.get("item_url"))
-    
-    # Agora separamos cidade e estado
-    cidade = edital.get("municipio_nome") or ""
-    estado = edital.get("uf") or ""
-    
-    # Link do edital
+    # Formato igual ao portal: "Cidade/UF".
+    local = "/".join(
+        p for p in [edital.get("municipio_nome"), edital.get("uf")] if p
+    )
+    # A pagina do edital no portal usa /app/editais/{cnpj}/{ano}/{seq}
+    # (sem o "/compras" que vem no item_url da API).
     if ref:
         link = "https://pncp.gov.br/app/editais/{}/{}/{}".format(*ref)
     else:
         link = "https://pncp.gov.br/app/editais"
-        
     base = {
+        "local": local,
         "orgao": edital.get("orgao_nome"),
-        "cidade": cidade,
-        "estado": estado,
         "data_fim": edital.get("data_fim_vigencia"),
         "edital": edital.get("title"),
         "esfera": edital.get("esfera_nome"),
         "link": link,
     }
-    
     if not ref:
         return [{**base, "item": None, "descricao": edital.get("description"),
                  "quantidade": None, "valor_unitario": None, "valor_total": None}]
@@ -140,9 +121,7 @@ def fetch_itens(edital):
 
 
 def build_rows(params):
-    """Busca os editais e expande em linhas por item (em paralelo).
-    Depois filtra apenas os itens que contêm a palavra-chave digitada.
-    """
+    """Busca os editais e expande em linhas por item (em paralelo)."""
     data = fetch_search(params)
     editais = data.get("items", [])
     total = data.get("total") or len(editais)
@@ -151,21 +130,6 @@ def build_rows(params):
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
         for result in pool.map(fetch_itens, editais):
             rows.extend(result)
-
-    # --- NOVO: filtrar apenas itens que contenham a palavra-chave ---
-    q = (params.get("q") or "").strip().lower()
-    if q:
-        rows_filtradas = []
-        for r in rows:
-            descricao = (r.get("descricao") or "").lower()
-            edital_titulo = (r.get("edital") or "").lower()
-            # mantém a linha se a palavra-chave aparecer na descrição do item
-            # ou no título do edital
-            if q in descricao or q in edital_titulo:
-                rows_filtradas.append(r)
-        rows = rows_filtradas
-    # ---------------------------------------------------------------
-
     return rows, total
 
 
@@ -211,27 +175,20 @@ def exportar():
     rows, _ = build_rows(params)
 
     cols = [
-    ("orgao", "Órgão"),
-    ("cidade", "Cidade"),
-    ("estado", "Estado"),
-    ("data_fim", "Data fim recebimento"),
-    ("item", "Item"),
-    ("descricao", "Descrição"),
-    ("quantidade", "Quantidade"),
-    ("valor_unitario", "Valor unitário estimado"),
-    ("valor_total", "Valor total estimado"),
-]
+        ("local", "Local"),
+        ("orgao", "Órgão"),
+        ("data_fim", "Data fim recebimento"),
+        ("item", "Item"),
+        ("descricao", "Descrição"),
+        ("quantidade", "Quantidade"),
+        ("valor_unitario", "Valor unitário estimado"),
+        ("valor_total", "Valor total estimado"),
+    ]
     buf = io.StringIO()
     writer = csv.writer(buf, delimiter=";")
     writer.writerow([label for _, label in cols])
     for r in rows:
-    linha = []
-    for key, _ in cols:
-        valor = r.get(key, "")
-        if key == "data_fim":
-            valor = formatar_data(valor)
-        linha.append(valor)
-    writer.writerow(linha)
+        writer.writerow([r.get(key, "") for key, _ in cols])
 
     # BOM para o Excel abrir acentos corretamente.
     csv_bytes = ("﻿" + buf.getvalue()).encode("utf-8")
