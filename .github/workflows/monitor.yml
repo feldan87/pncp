@@ -1,0 +1,29 @@
+name: Monitor PNCP
+
+on:
+  schedule:
+    # Roda todos os dias às 20:00 horário de Brasília (23:00 UTC)
+    - cron: '0 23 * * *'
+  workflow_dispatch:  # permite rodar manualmente também
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Instalar dependências
+        run: |
+          pip install requests resend
+
+      - name: Rodar monitoramento
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          EMAIL_DESTINO: ${{ secrets.EMAIL_DESTINO }}
+        run: python monitor.py
