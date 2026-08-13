@@ -82,12 +82,19 @@
 
     <div class="tabela-wrap">
       <table>
-        <thead>
-          <tr>
-            <th>Local</th><th>Órgão</th><th>Data fim</th><th>Item</th>
-            <th>Descrição</th><th>Qtd.</th><th>Vlr. unitário</th><th>Vlr. total</th>
-          </tr>
-        </thead>
+       <thead>
+  <tr>
+    <th>Órgão</th>
+    <th>Cidade</th>
+    <th>Estado</th>
+    <th>Data fim</th>
+    <th>Item</th>
+    <th>Descrição</th>
+    <th>Qtd.</th>
+    <th>Vlr. unitário</th>
+    <th>Vlr. total</th>
+  </tr>
+</thead>
         <tbody id="corpo"></tbody>
       </table>
     </div>
@@ -150,16 +157,17 @@
       }
       data.linhas.forEach(l => {
         const tr = document.createElement("tr");
-        tr.innerHTML = `
-          <td>${l.local || "—"}</td>
-          <td>${l.orgao || "—"}</td>
-          <td>${fmtData(l.data_fim)}</td>
-          <td class="num">${l.item ?? "—"}</td>
-          <td class="desc">${l.descricao || "—"}
-            ${l.link ? `<br><a class="link" href="${l.link}" target="_blank">ver edital ↗</a>` : ""}</td>
-          <td class="num">${fmtNum(l.quantidade)}${l.unidade ? " "+l.unidade : ""}</td>
-          <td class="num">${fmtMoeda(l.valor_unitario)}</td>
-          <td class="num">${fmtMoeda(l.valor_total)}</td>`;
+tr.innerHTML = `
+  <td>${l.orgao || "—"}</td>
+  <td>${l.cidade || "—"}</td>
+  <td>${l.estado || "—"}</td>
+  <td>${fmtData(l.data_fim)}</td>
+  <td class="num">${l.item ?? "—"}</td>
+  <td class="desc">${l.descricao || "—"}
+    ${l.link ? `<br><a class="link" href="${l.link}" target="_blank">ver edital ↗</a>` : ""}</td>
+  <td class="num">${fmtNum(l.quantidade)}${l.unidade ? " " + l.unidade : ""}</td>
+  <td class="num">${fmtMoeda(l.valor_unitario)}</td>
+  <td class="num">${fmtMoeda(l.valor_total)}</td>`;
         corpo.appendChild(tr);
       });
       $("pagInfo").textContent = "Página " + data.pagina;
