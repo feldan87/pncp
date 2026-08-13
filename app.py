@@ -191,15 +191,32 @@ def buscar():
 
 @app.route("/api/exportar")
 def exportar():
-    """Mesma busca, devolvida como CSV (planilha)."""
+    """Exporta TODOS os resultados da busca (várias páginas) em CSV."""
     params = {
         "q": request.args.get("q", ""),
         "uf": request.args.get("uf", ""),
         "esfera": request.args.get("esfera", ""),
         "status": request.args.get("status", "recebendo_proposta"),
-        "pagina": request.args.get("pagina", "1"),
     }
-    rows, _ = build_rows(params)
+
+    todas_linhas = []
+    pagina = 1
+    max_paginas = 10  # limite de segurança (10 x 25 = 250 editais)
+
+    while pagina <= max_paginas:
+        params["pagina"] = str(pagina)
+        rows, total = build_rows(params)
+
+        if not rows:
+            break
+
+        todas_linhas.extend(rows)
+
+        # Se trouxe menos que o tamanho da página, acabaram os resultados
+        if len(rows) < TAM_PAGINA:
+            break
+
+        pagina += 1
 
     cols = [
         ("orgao", "Órgão"),
@@ -217,7 +234,7 @@ def exportar():
     writer = csv.writer(buf, delimiter=";")
     writer.writerow([label for _, label in cols])
 
-    for r in rows:
+    for r in todas_linhas:
         linha = []
         for key, _ in cols:
             valor = r.get(key, "")
@@ -226,14 +243,12 @@ def exportar():
             linha.append(valor)
         writer.writerow(linha)
 
-    # BOM para o Excel abrir acentos corretamente.
     csv_bytes = ("﻿" + buf.getvalue()).encode("utf-8")
     return Response(
         csv_bytes,
         mimetype="text/csv",
         headers={"Content-Disposition": "attachment; filename=editais_pncp.csv"},
     )
-
 
 if __name__ == "__main__":
     # use_reloader=False evita falha do auto-reload no Windows; produção usa gunicorn.
