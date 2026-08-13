@@ -71,24 +71,27 @@ def parse_item_url(item_url):
 def fetch_itens(edital):
     """Busca os itens de um edital e devolve uma linha por item."""
     ref = parse_item_url(edital.get("item_url"))
-    # Formato igual ao portal: "Cidade/UF".
-    local = "/".join(
-        p for p in [edital.get("municipio_nome"), edital.get("uf")] if p
-    )
-    # A pagina do edital no portal usa /app/editais/{cnpj}/{ano}/{seq}
-    # (sem o "/compras" que vem no item_url da API).
+    
+    # Agora separamos cidade e estado
+    cidade = edital.get("municipio_nome") or ""
+    estado = edital.get("uf") or ""
+    
+    # Link do edital
     if ref:
         link = "https://pncp.gov.br/app/editais/{}/{}/{}".format(*ref)
     else:
         link = "https://pncp.gov.br/app/editais"
+        
     base = {
-        "local": local,
         "orgao": edital.get("orgao_nome"),
+        "cidade": cidade,
+        "estado": estado,
         "data_fim": edital.get("data_fim_vigencia"),
         "edital": edital.get("title"),
         "esfera": edital.get("esfera_nome"),
         "link": link,
     }
+    
     if not ref:
         return [{**base, "item": None, "descricao": edital.get("description"),
                  "quantidade": None, "valor_unitario": None, "valor_total": None}]
@@ -192,15 +195,16 @@ def exportar():
     rows, _ = build_rows(params)
 
     cols = [
-        ("local", "Local"),
-        ("orgao", "Órgão"),
-        ("data_fim", "Data fim recebimento"),
-        ("item", "Item"),
-        ("descricao", "Descrição"),
-        ("quantidade", "Quantidade"),
-        ("valor_unitario", "Valor unitário estimado"),
-        ("valor_total", "Valor total estimado"),
-    ]
+    ("orgao", "Órgão"),
+    ("cidade", "Cidade"),
+    ("estado", "Estado"),
+    ("data_fim", "Data fim recebimento"),
+    ("item", "Item"),
+    ("descricao", "Descrição"),
+    ("quantidade", "Quantidade"),
+    ("valor_unitario", "Valor unitário estimado"),
+    ("valor_total", "Valor total estimado"),
+]
     buf = io.StringIO()
     writer = csv.writer(buf, delimiter=";")
     writer.writerow([label for _, label in cols])
