@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Busca de Editais — PNCP</title>
+  <style>
+    :root { --azul:#1351b4; --azul-esc:#0c326f; --cinza:#f4f6fa; --borda:#d3d9e3; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: "Segoe UI", Arial, sans-serif; background:var(--cinza); color:#1c1c1c; }
+    header { background:var(--azul); color:#fff; padding:18px 24px; }
+    header h1 { margin:0; font-size:20px; }
+    header p { margin:4px 0 0; font-size:13px; opacity:.85; }
+    .container { max-width:1280px; margin:0 auto; padding:20px 24px; }
+    .filtros { background:#fff; border:1px solid var(--borda); border-radius:8px; padding:16px;
+               display:grid; grid-template-columns: 2fr 1fr 1fr 1fr auto; gap:12px; align-items:end; }
+    .campo { display:flex; flex-direction:column; gap:4px; }
+    .campo label { font-size:12px; font-weight:600; color:#555; }
+    .campo input, .campo select { padding:8px 10px; border:1px solid var(--borda); border-radius:6px; font-size:14px; }
+    .acoes { display:flex; gap:8px; }
+    button { background:var(--azul); color:#fff; border:0; border-radius:6px; padding:9px 16px;
+             font-size:14px; font-weight:600; cursor:pointer; }
+    button:hover { background:var(--azul-esc); }
+    button.sec { background:#fff; color:var(--azul); border:1px solid var(--azul); }
+    .status { margin:14px 2px; font-size:14px; color:#555; min-height:20px; }
+    .tabela-wrap { background:#fff; border:1px solid var(--borda); border-radius:8px; overflow:auto; }
+    table { border-collapse:collapse; width:100%; font-size:13px; }
+    th, td { padding:10px 12px; text-align:left; border-bottom:1px solid #eef0f4; vertical-align:top; }
+    th { background:#eaf0fb; color:var(--azul-esc); position:sticky; top:0; font-size:12px; text-transform:uppercase; letter-spacing:.3px; }
+    tr:hover td { background:#fafbfe; }
+    td.num { text-align:right; white-space:nowrap; }
+    .desc { max-width:380px; }
+    .paginacao { display:flex; gap:8px; align-items:center; justify-content:center; margin:18px 0; }
+    .paginacao span { font-size:14px; color:#555; }
+    a.link { color:var(--azul); text-decoration:none; }
+    a.link:hover { text-decoration:underline; }
+    @media (max-width:900px){ .filtros{ grid-template-columns:1fr 1fr; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Busca de Editais — PNCP</h1>
+    <p>Consulta direta ao Portal Nacional de Contratações Públicas</p>
+  </header>
+
+  <div class="container">
+    <form class="filtros" id="form">
+      <div class="campo">
+        <label for="q">Palavra-chave</label>
+        <input type="text" id="q" placeholder="ex.: software, merenda, pavimentação">
+      </div>
+      <div class="campo">
+        <label for="uf">UF</label>
+        <select id="uf"><option value="">Todas</option></select>
+      </div>
+      <div class="campo">
+        <label for="esfera">Esfera</label>
+        <select id="esfera">
+          <option value="">Todas</option>
+          <option value="F">Federal</option>
+          <option value="E">Estadual</option>
+          <option value="M">Municipal</option>
+          <option value="D">Distrital</option>
+        </select>
+      </div>
+      <div class="campo">
+        <label for="status">Status</label>
+        <select id="status">
+          <option value="recebendo_proposta">A Receber / Recebendo proposta</option>
+          <option value="propostas_encerradas">Em julgamento / Propostas encerradas</option>
+          <option value="encerradas">Encerradas</option>
+          <option value="todos">Todos</option>
+        </select>
+      </div>
+      <div class="acoes">
+        <button type="submit">Buscar</button>
+        <button type="button" class="sec" id="btnCsv">Planilha</button>
+      </div>
+    </form>
+
+    <div class="status" id="statusMsg">Preencha os filtros e clique em Buscar.</div>
+
+    <div class="tabela-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Local</th><th>Órgão</th><th>Data fim</th><th>Item</th>
+            <th>Descrição</th><th>Qtd.</th><th>Vlr. unitário</th><th>Vlr. total</th>
+          </tr>
+        </thead>
+        <tbody id="corpo"></tbody>
+      </table>
+    </div>
+
+    <div class="paginacao">
+      <button type="button" class="sec" id="ant">‹ Anterior</button>
+      <span id="pagInfo">Página 1</span>
+      <button type="button" class="sec" id="prox">Próxima ›</button>
+    </div>
+  </div>
+
+  <script>
+    const UFS = ["AC","AL","AP","AM","BA","CE","DF","ES","GO","MA","MT","MS","MG","PA","PB","PR","PE","PI","RJ","RN","RS","RO","RR","SC","SP","SE","TO"];
+    const selUf = document.getElementById("uf");
+    UFS.forEach(u => { const o=document.createElement("option"); o.value=u; o.textContent=u; selUf.appendChild(o); });
+
+    let pagina = 1;
+    const $ = id => document.getElementById(id);
+
+    const fmtData = d => {
+      if (!d) return "—";
+      const dt = new Date(d);
+      return isNaN(dt) ? d : dt.toLocaleDateString("pt-br") + " " + dt.toLocaleTimeString("pt-br",{hour:"2-digit",minute:"2-digit"});
+    };
+    const fmtMoeda = v => (v===null||v===undefined||v==="") ? "—"
+      : Number(v).toLocaleString("pt-br",{style:"currency",currency:"BRL"});
+    const fmtNum = v => (v===null||v===undefined||v==="") ? "—"
+      : Number(v).toLocaleString("pt-br",{maximumFractionDigits:4});
+
+    function params() {
+      const p = new URLSearchParams();
+      p.set("q", $("q").value.trim());
+      p.set("uf", $("uf").value);
+      p.set("esfera", $("esfera").value);
+      p.set("status", $("status").value);
+      p.set("pagina", pagina);
+      return p;
+    }
+
+    async function buscar() {
+      $("statusMsg").textContent = "Buscando no PNCP...";
+      $("corpo").innerHTML = "";
+      try {
+        const r = await fetch("/api/buscar?" + params().toString());
+        const data = await r.json();
+        if (data.erro) { $("statusMsg").textContent = "Erro: " + data.erro; return; }
+        render(data);
+      } catch (e) {
+        $("statusMsg").textContent = "Falha na conexão: " + e.message;
+      }
+    }
+
+    function render(data) {
+      const corpo = $("corpo");
+      if (!data.linhas.length) {
+        $("statusMsg").textContent = "Nenhum resultado para os filtros informados.";
+      } else {
+        $("statusMsg").textContent =
+          `${data.linhas.length} item(ns) em ${data.total_editais} edital(is) encontrados — página ${data.pagina}.`;
+      }
+      data.linhas.forEach(l => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${l.local || "—"}</td>
+          <td>${l.orgao || "—"}</td>
+          <td>${fmtData(l.data_fim)}</td>
+          <td class="num">${l.item ?? "—"}</td>
+          <td class="desc">${l.descricao || "—"}
+            ${l.link ? `<br><a class="link" href="${l.link}" target="_blank">ver edital ↗</a>` : ""}</td>
+          <td class="num">${fmtNum(l.quantidade)}${l.unidade ? " "+l.unidade : ""}</td>
+          <td class="num">${fmtMoeda(l.valor_unitario)}</td>
+          <td class="num">${fmtMoeda(l.valor_total)}</td>`;
+        corpo.appendChild(tr);
+      });
+      $("pagInfo").textContent = "Página " + data.pagina;
+    }
+
+    $("form").addEventListener("submit", e => { e.preventDefault(); pagina = 1; buscar(); });
+    $("ant").addEventListener("click", () => { if (pagina>1){ pagina--; buscar(); } });
+    $("prox").addEventListener("click", () => { pagina++; buscar(); });
+    $("btnCsv").addEventListener("click", () => {
+      window.location = "/api/exportar?" + params().toString();
+    });
+  </script>
+</body>
+</html>
