@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Logs / artefatos de teste
+*.log
+shot_*.png
+_uicheck*.py
+r.json
+e.csv
+
+# Sistema / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Config local do ambiente
+.claude/
