@@ -1,7 +1,11 @@
 import os
+import json
+import csv
+import io
 import concurrent.futures
 import requests
 from datetime import datetime
+from pathlib import Path
 import resend
 
 # ================== CONFIGURAÇÕES ==================
@@ -27,8 +31,9 @@ PALAVRAS_CHAVE = [
     "pilha",
 ]
 
-# Status que queremos monitorar
 STATUS = "recebendo_proposta"
+SEEN_FILE = Path("seen_items.json")
+MAX_SEEN = 5000
 # ==================================================
 
 resend.api_key = os.environ.get("RESEND_API_KEY")
@@ -48,6 +53,34 @@ HEADERS = {
 TAM_PAGINA = 10
 MAX_WORKERS = 6
 TIMEOUT = 30
+
+
+def carregar_vistos():
+    if SEEN_FILE.exists():
+        try:
+            with open(SEEN_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return set(data.get("ids", []))
+        except Exception:
+            return set()
+    return set()
+
+
+def salvar_vistos(ids):
+    lista = list(ids)[-MAX_SEEN:]
+    with open(SEEN_FILE, "w", encoding="utf-8") as f:
+        json.dump(
+            {"ids": lista, "atualizado_em": datetime.now().isoformat()},
+            f,
+            ensure_ascii=False,
+            indent=2,
+        )
+
+
+def id_unico(r):
+    link = r.get("link") or ""
+    item = r.get("item")
+    return f"{link}|{item}"
 
 
 def fetch_search(q):
@@ -75,7 +108,7 @@ def fetch_itens(edital, palavra):
     ref = parse_item_url(edital.get("item_url"))
     cidade = edital.get("municipio_nome") or ""
     estado = edital.get("uf") or ""
-    
+
     if ref:
         link = f"https://pncp.gov.br/app/editais/{ref[0]}/{ref[1]}/{ref[2]}"
     else:
@@ -154,8 +187,8 @@ def montar_html(resultados):
         return None
 
     html = f"""
-    <h2>Novas oportunidades encontradas no PNCP</h2>
-    <p>Foram encontrados <strong>{len(resultados)}</strong> item(ns) relevantes:</p>
+    <h2>Novas oportunidades no PNCP</h2>
+    <p>Foram encontrados <strong>{len(resultados)}</strong> item(ns) <u>novos</u>:</p>
     <hr>
     """
 
@@ -175,25 +208,92 @@ def montar_html(resultados):
     return html
 
 
-def enviar_email(html):
+def gerar_csv(resultados):
+    """Gera o conteúdo CSV dos resultados novos."""
+    if not resultados:
+        return None
+
+    cols = [
+        ("palavra", "Palavra-chave"),
+        ("orgao", "Órgão"),
+        ("cidade", "Cidade"),
+        ("estado", "Estado"),
+        ("data_fim", "Data fim"),
+        ("item", "Item"),
+        ("descricao", "Descrição"),
+        ("quantidade", "Quantidade"),
+        ("unidade", "Unidade"),
+        ("valor_unitario", "Valor unitário"),
+        ("valor_total", "Valor total"),
+        ("link", "Link"),
+    ]
+
+    buf = io.StringIO()
+    writer = csv.writer(buf, delimiter=";")
+    writer.writerow([label for _, label in cols])
+
+    for r in resultados:
+        linha = []
+        for key, _ in cols:
+            valor = r.get(key, "")
+            if key == "data_fim":
+                valor = formatar_data(valor)
+            linha.append("" if valor is None else valor)
+        writer.writerow(linha)
+
+    conteudo = ("﻿" + buf.getvalue()).encode("utf-8")
+    print(f"CSV gerado: {len(conteudo)} bytes")
+    return conteudo
+
+
+def enviar_email(html, qtd, csv_bytes=None):
     if not html:
-        print("Nenhum resultado encontrado. E-mail não enviado.")
+        print("Nenhum item novo. E-mail não enviado.")
         return
 
     params = {
         "from": "PNCP Monitor <onboarding@resend.dev>",
         "to": [EMAIL_DESTINO],
-        "subject": f"[PNCP] {datetime.now().strftime('%d/%m/%Y')} - Novas licitações encontradas",
+        "subject": f"[PNCP] {datetime.now().strftime('%d/%m/%Y')} - {qtd} nova(s) licitação(ões)",
         "html": html,
     }
+
+    if csv_bytes:
+        params["attachments"] = [
+            {
+                "filename": f"editais_pncp_{datetime.now().strftime('%Y%m%d')}.csv",
+                "content": list(csv_bytes),
+                "content_type": "text/csv",
+            }
+        ]
+        print("Anexo CSV adicionado ao e-mail.")
+
     result = resend.Emails.send(params)
     print("E-mail enviado com sucesso:", result)
 
 
 if __name__ == "__main__":
     print("Iniciando monitoramento...")
+    vistos = carregar_vistos()
+    print(f"Itens já vistos anteriormente: {len(vistos)}")
+
     resultados = buscar_todas()
-    print(f"Total de itens encontrados: {len(resultados)}")
-    html = montar_html(resultados)
-    enviar_email(html)
+    print(f"Total encontrado agora: {len(resultados)}")
+
+    # Filtra só os novos
+    novos = []
+    for r in resultados:
+        uid = id_unico(r)
+        if uid not in vistos:
+            novos.append(r)
+            vistos.add(uid)
+
+    print(f"Itens NOVOS: {len(novos)}")
+
+    html = montar_html(novos)
+    csv_bytes = gerar_csv(novos)
+    enviar_email(html, len(novos), csv_bytes)
+
+    salvar_vistos(vistos)
+    print("Lista de itens vistos atualizada.")
     print("Monitoramento finalizado.")
