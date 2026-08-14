@@ -2,6 +2,7 @@ import os
 import json
 import csv
 import io
+import base64
 import concurrent.futures
 import requests
 from datetime import datetime
@@ -262,14 +263,17 @@ def enviar_email(html, qtd, csv_bytes=None):
         params["attachments"] = [
             {
                 "filename": f"editais_pncp_{datetime.now().strftime('%Y%m%d')}.csv",
-                "content": list(csv_bytes),
-                "content_type": "text/csv",
+                "content": base64.b64encode(csv_bytes).decode("utf-8"),
             }
         ]
-        print("Anexo CSV adicionado ao e-mail.")
+        print(f"Anexo CSV adicionado ao e-mail ({len(csv_bytes)} bytes).")
 
-    result = resend.Emails.send(params)
-    print("E-mail enviado com sucesso:", result)
+    try:
+        result = resend.Emails.send(params)
+        print("E-mail enviado com sucesso:", result)
+    except Exception as e:
+        print("ERRO ao enviar e-mail:", e)
+        raise
 
 
 if __name__ == "__main__":
