@@ -32,9 +32,16 @@ PALAVRAS_CHAVE = [
     "pilha",
 ]
 
+# Cidade monitorada sem palavra-chave (todos os editais)
+CIDADE_EXTRA = "Passo Fundo"
+UF_EXTRA = "RS"
+
 STATUS = "recebendo_proposta"
 SEEN_FILE = Path("seen_items.json")
 MAX_SEEN = 5000
+
+# Quantas páginas buscar na varredura de Passo Fundo (RS)
+PAGINAS_PASSO_FUNDO = 5
 # ==================================================
 
 resend.api_key = os.environ.get("RESEND_API_KEY")
@@ -84,15 +91,17 @@ def id_unico(r):
     return f"{link}|{item}"
 
 
-def fetch_search(q):
+def fetch_search(q="", uf="", pagina="1"):
     query = {
         "q": q,
         "tipos_documento": "edital",
         "ordenacao": "-data",
-        "pagina": "1",
+        "pagina": str(pagina),
         "tam_pagina": TAM_PAGINA,
         "status": STATUS,
     }
+    if uf:
+        query["ufs"] = uf
     resp = requests.get(SEARCH_URL, params=query, headers=HEADERS, timeout=TIMEOUT)
     resp.raise_for_status()
     return resp.json()
@@ -105,7 +114,11 @@ def parse_item_url(item_url):
     return None
 
 
-def fetch_itens(edital, palavra):
+def fetch_itens(edital, palavra, filtrar_palavra=True):
+    """Busca itens do edital.
+    Se filtrar_palavra=True, só mantém itens cuja descrição contém a palavra.
+    Se filtrar_palavra=False, traz todos os itens (caso Passo Fundo).
+    """
     ref = parse_item_url(edital.get("item_url"))
     cidade = edital.get("municipio_nome") or ""
     estado = edital.get("uf") or ""
@@ -126,7 +139,16 @@ def fetch_itens(edital, palavra):
     }
 
     if not ref:
-        return []
+        # Sem itens detalhados: devolve 1 linha do próprio edital
+        return [{
+            **base,
+            "item": None,
+            "descricao": edital.get("description") or edital.get("title"),
+            "quantidade": None,
+            "unidade": None,
+            "valor_unitario": None,
+            "valor_total": None,
+        }]
 
     cnpj, ano, seq = ref
     url = ITENS_URL.format(cnpj=cnpj, ano=ano, seq=seq)
@@ -135,22 +157,34 @@ def fetch_itens(edital, palavra):
         resp.raise_for_status()
         itens = resp.json()
     except Exception:
-        return []
+        itens = []
+
+    if not itens:
+        return [{
+            **base,
+            "item": None,
+            "descricao": edital.get("description") or edital.get("title"),
+            "quantidade": None,
+            "unidade": None,
+            "valor_unitario": None,
+            "valor_total": None,
+        }]
 
     rows = []
-    palavra_lower = palavra.lower()
+    palavra_lower = (palavra or "").lower()
     for it in itens:
-        descricao = (it.get("descricao") or "").lower()
-        if palavra_lower in descricao:
-            rows.append({
-                **base,
-                "item": it.get("numeroItem"),
-                "descricao": it.get("descricao"),
-                "quantidade": it.get("quantidade"),
-                "unidade": it.get("unidadeMedida"),
-                "valor_unitario": it.get("valorUnitarioEstimado"),
-                "valor_total": it.get("valorTotal"),
-            })
+        descricao = (it.get("descricao") or "")
+        if filtrar_palavra and palavra_lower and palavra_lower not in descricao.lower():
+            continue
+        rows.append({
+            **base,
+            "item": it.get("numeroItem"),
+            "descricao": descricao,
+            "quantidade": it.get("quantidade"),
+            "unidade": it.get("unidadeMedida"),
+            "valor_unitario": it.get("valorUnitarioEstimado"),
+            "valor_total": it.get("valorTotal"),
+        })
     return rows
 
 
@@ -167,20 +201,65 @@ def formatar_data(valor):
         return str(valor)
 
 
-def buscar_todas():
+def buscar_por_palavras():
+    """Busca normal por palavras-chave (como já funcionava)."""
     todos_resultados = []
     for palavra in PALAVRAS_CHAVE:
-        print(f"Buscando: {palavra}")
+        print(f"Buscando palavra-chave: {palavra}")
         try:
-            data = fetch_search(palavra)
+            data = fetch_search(q=palavra)
             editais = data.get("items", [])
             with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-                futures = [pool.submit(fetch_itens, ed, palavra) for ed in editais]
+                futures = [
+                    pool.submit(fetch_itens, ed, palavra, True)
+                    for ed in editais
+                ]
                 for f in concurrent.futures.as_completed(futures):
                     todos_resultados.extend(f.result())
         except Exception as e:
             print(f"Erro na palavra '{palavra}': {e}")
     return todos_resultados
+
+
+def buscar_passo_fundo():
+    """Busca TODOS os editais de Passo Fundo/RS, sem palavra-chave."""
+    print(f"Buscando todos os editais de {CIDADE_EXTRA}/{UF_EXTRA}...")
+    resultados = []
+    cidade_alvo = CIDADE_EXTRA.lower()
+
+    for pagina in range(1, PAGINAS_PASSO_FUNDO + 1):
+        try:
+            data = fetch_search(q="", uf=UF_EXTRA, pagina=pagina)
+            editais = data.get("items", [])
+            if not editais:
+                break
+
+            # Filtra só Passo Fundo
+            editais_pf = [
+                ed for ed in editais
+                if cidade_alvo in (ed.get("municipio_nome") or "").lower()
+            ]
+            print(f"  Página {pagina}: {len(editais)} editais RS, {len(editais_pf)} de Passo Fundo")
+
+            if not editais_pf:
+                continue
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+                futures = [
+                    pool.submit(fetch_itens, ed, f"{CIDADE_EXTRA}/{UF_EXTRA}", False)
+                    for ed in editais_pf
+                ]
+                for f in concurrent.futures.as_completed(futures):
+                    resultados.extend(f.result())
+
+            # Se veio menos que o tamanho da página, acabou
+            if len(editais) < TAM_PAGINA:
+                break
+        except Exception as e:
+            print(f"Erro na página {pagina} de Passo Fundo: {e}")
+
+    print(f"Total de itens de Passo Fundo encontrados: {len(resultados)}")
+    return resultados
 
 
 def montar_html(resultados):
@@ -196,7 +275,7 @@ def montar_html(resultados):
     for r in resultados:
         html += f"""
         <div style="margin-bottom: 20px; padding: 12px; border: 1px solid #ddd; border-radius: 8px;">
-            <p><strong>Palavra-chave:</strong> {r['palavra']}</p>
+            <p><strong>Origem:</strong> {r['palavra']}</p>
             <p><strong>Órgão:</strong> {r.get('orgao') or '—'}</p>
             <p><strong>Cidade/UF:</strong> {r.get('cidade') or '—'} / {r.get('estado') or '—'}</p>
             <p><strong>Data fim:</strong> {formatar_data(r.get('data_fim'))}</p>
@@ -210,12 +289,11 @@ def montar_html(resultados):
 
 
 def gerar_csv(resultados):
-    """Gera o conteúdo CSV dos resultados novos."""
     if not resultados:
         return None
 
     cols = [
-        ("palavra", "Palavra-chave"),
+        ("palavra", "Origem"),
         ("orgao", "Órgão"),
         ("cidade", "Cidade"),
         ("estado", "Estado"),
@@ -281,8 +359,24 @@ if __name__ == "__main__":
     vistos = carregar_vistos()
     print(f"Itens já vistos anteriormente: {len(vistos)}")
 
-    resultados = buscar_todas()
-    print(f"Total encontrado agora: {len(resultados)}")
+    # 1) Busca por palavras-chave (como antes)
+    resultados_palavras = buscar_por_palavras()
+    print(f"Total por palavras-chave: {len(resultados_palavras)}")
+
+    # 2) Busca todos de Passo Fundo/RS (sem palavra-chave)
+    resultados_pf = buscar_passo_fundo()
+    print(f"Total Passo Fundo: {len(resultados_pf)}")
+
+    # Junta tudo e remove duplicados
+    resultados = []
+    ids_ja_na_lista = set()
+    for r in resultados_palavras + resultados_pf:
+        uid = id_unico(r)
+        if uid not in ids_ja_na_lista:
+            resultados.append(r)
+            ids_ja_na_lista.add(uid)
+
+    print(f"Total combinado (sem duplicar): {len(resultados)}")
 
     # Filtra só os novos
     novos = []
